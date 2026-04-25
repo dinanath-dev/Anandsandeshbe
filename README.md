@@ -85,6 +85,13 @@ npm run dev
 Frontend: `http://localhost:5173`
 Backend: `http://localhost:5000`
 
+Single-command options from repo root:
+
+```bash
+npm run dev:all     # backend + frontend dev watchers
+npm run start:all   # backend start + frontend preview
+```
+
 ## Deployment
 
 Backend:
@@ -100,6 +107,10 @@ Frontend:
 2. Set `VITE_API_BASE_URL` to your backend URL, for example `https://api.example.com/api`.
 3. Build command: `npm run build`.
 4. Publish directory: `dist`.
+
+### Vercel note
+
+Vercel should host the frontend (`/frontend`) only. The Express backend (`/backend`) should stay on Render/Railway/Fly or be rewritten as Vercel serverless functions.
 
 Security notes:
 

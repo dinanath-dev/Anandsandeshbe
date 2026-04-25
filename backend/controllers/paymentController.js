@@ -4,6 +4,7 @@ import { createSubmission } from '../models/submissionModel.js';
 import { uploadScreenshot } from '../utils/uploadScreenshot.js';
 import { AppError } from '../utils/AppError.js';
 import { appendSubmissionToGoogleSheet } from '../utils/googleSheets.js';
+import { getRequestMeta, logger, maskEmail } from '../utils/logger.js';
 
 const paymentSchema = z.object({
   transaction_id: z.string().trim().max(120).optional().or(z.literal(''))
@@ -11,6 +12,11 @@ const paymentSchema = z.object({
 
 export async function savePayment(req, res, next) {
   try {
+    logger.info('payment.save.start', {
+      ...getRequestMeta(req),
+      email: maskEmail(req.user?.email),
+      hasFile: Boolean(req.file)
+    });
     const parsed = paymentSchema.safeParse(req.body);
     if (!parsed.success) throw new AppError('Invalid payment details.', 400);
 
@@ -33,9 +39,18 @@ export async function savePayment(req, res, next) {
     });
 
     void appendSubmissionToGoogleSheet(submission, 'payment_upload').catch((err) =>
-      console.error('[sheets]', err.message || err)
+      logger.warn('sheets.append.failed', {
+        ...getRequestMeta(req),
+        event: 'payment_upload',
+        message: err?.message || String(err)
+      })
     );
 
+    logger.info('payment.save.success', {
+      ...getRequestMeta(req),
+      email: maskEmail(email),
+      subscriberNo
+    });
     res.status(201).json({ submissionId: submission.id, payment_status: submission.payment_status });
   } catch (error) {
     next(error);

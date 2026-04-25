@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { AppError } from './AppError.js';
+import { logger, maskEmail } from './logger.js';
 
 function getTransportConfig() {
   const host = process.env.SMTP_HOST;
@@ -18,6 +19,7 @@ function getTransportConfig() {
 }
 
 let transporter;
+const SLOW_EMAIL_MS = 4000;
 
 function getTransporter() {
   if (transporter) return transporter;
@@ -207,26 +209,22 @@ export async function sendOtpEmail({ email, otp, fullName, mode = 'signup' }) {
   const subject = getOtpEmailSubject(mode);
   const smtpHost = process.env.SMTP_HOST || '';
   const smtpPort = String(process.env.SMTP_PORT || 587);
+  const maskedTo = maskEmail(email);
 
   if (!activeTransporter || !from) {
     if (process.env.NODE_ENV === 'production') {
-      console.error(
-        '[mail/otp] missing SMTP or MAIL_FROM',
-        JSON.stringify({ smtpHost: smtpHost || null, hasFrom: Boolean(from) })
-      );
+      logger.error('mail.otp.missingConfig', { smtpConfigured: Boolean(smtpHost), hasFrom: Boolean(from) });
       throw new AppError('Email service is not configured.', 500);
     }
 
-    console.log('[mail/otp] dev fallback (no SMTP)', JSON.stringify({ to: email, mode, otp }));
+    logger.warn('mail.otp.devFallback', { to: maskedTo, mode });
     return { delivered: false };
   }
 
-  console.log(
-    '[mail/otp] sending',
-    JSON.stringify({ to: email, mode, smtpHost, smtpPort, fromPreview: from.split('<')[0].trim() })
-  );
+  logger.info('mail.otp.sending', { to: maskedTo, mode, smtpHost: Boolean(smtpHost), smtpPort });
 
   try {
+    const startedAt = Date.now();
     const info = await activeTransporter.sendMail({
       from,
       to: email,
@@ -234,25 +232,23 @@ export async function sendOtpEmail({ email, otp, fullName, mode = 'signup' }) {
       text: buildOtpText({ email, otp, fullName, mode }),
       html: buildOtpHtml({ email, otp, fullName, mode })
     });
+    const elapsedMs = Date.now() - startedAt;
 
-    console.log(
-      '[mail/otp] sent',
-      JSON.stringify({ to: email, messageId: info.messageId || null, response: info.response || null })
-    );
+    logger.info('mail.otp.sent', { to: maskedTo, elapsedMs, messageId: info.messageId || null });
+    if (elapsedMs >= SLOW_EMAIL_MS) {
+      logger.warn('mail.otp.slow', { to: maskedTo, elapsedMs });
+    }
     return { delivered: true };
   } catch (err) {
-    console.error(
-      '[mail/otp] send failed',
-      JSON.stringify({
-        to: email,
-        smtpHost,
-        smtpPort,
-        message: err?.message,
-        code: err?.code,
-        command: err?.command,
-        response: err?.response
-      })
-    );
+    logger.error('mail.otp.failed', {
+      to: maskedTo,
+      smtpHost: Boolean(smtpHost),
+      smtpPort,
+      message: err?.message,
+      code: err?.code,
+      command: err?.command,
+      response: err?.response
+    });
     throw new AppError('Could not send verification email. Check SMTP settings and logs.', 500);
   }
 }

@@ -10,6 +10,7 @@ import {
 import { uploadScreenshot } from '../utils/uploadScreenshot.js';
 import { AppError } from '../utils/AppError.js';
 import { appendSubmissionToGoogleSheet } from '../utils/googleSheets.js';
+import { getRequestMeta, logger, maskEmail } from '../utils/logger.js';
 
 const emptyToUndefined = (v) => (v === '' || v === undefined || v === null ? undefined : v);
 
@@ -47,6 +48,11 @@ export async function getMySubmission(req, res, next) {
     const email = req.user.email.trim().toLowerCase();
     const subscriberNo = await allocateSubscriberNo(email);
     const submission = await findSubmissionForUser(email, subscriberNo);
+    logger.info('form.getMySubmission.success', {
+      ...getRequestMeta(req),
+      email: maskEmail(email),
+      subscriberNo
+    });
     res.json({ submission });
   } catch (e) {
     next(e);
@@ -55,6 +61,11 @@ export async function getMySubmission(req, res, next) {
 
 export async function saveForm(req, res, next) {
   try {
+    logger.info('form.save.start', {
+      ...getRequestMeta(req),
+      email: maskEmail(req.user?.email),
+      hasFile: Boolean(req.file)
+    });
     const parsed = formBodySchema.safeParse(req.body);
     if (!parsed.success) {
       throw new AppError(parsed.error.issues[0]?.message || 'Invalid form data.', 400);
@@ -95,9 +106,18 @@ export async function saveForm(req, res, next) {
       const submission = await updateSubmission(subscriberNo, patch);
 
       void appendSubmissionToGoogleSheet(submission, 'updated').catch((err) =>
-        console.error('[sheets]', err.message || err)
+        logger.warn('sheets.append.failed', {
+          ...getRequestMeta(req),
+          event: 'updated',
+          message: err?.message || String(err)
+        })
       );
 
+      logger.info('form.save.updated', {
+        ...getRequestMeta(req),
+        email: maskEmail(req.user?.email),
+        subscriberNo
+      });
       res.json({ submission });
       return;
     }
@@ -112,9 +132,18 @@ export async function saveForm(req, res, next) {
     });
 
     void appendSubmissionToGoogleSheet(submission, 'created').catch((err) =>
-      console.error('[sheets]', err.message || err)
+      logger.warn('sheets.append.failed', {
+        ...getRequestMeta(req),
+        event: 'created',
+        message: err?.message || String(err)
+      })
     );
 
+    logger.info('form.save.created', {
+      ...getRequestMeta(req),
+      email: maskEmail(req.user?.email),
+      subscriberNo
+    });
     res.status(201).json({ submission });
   } catch (error) {
     next(error);

@@ -13,6 +13,7 @@ import {
   upsertOtpRecord
 } from '../models/authModel.js';
 import { sendOtpEmail } from '../utils/mailer.js';
+import { getRequestMeta, logger, maskEmail } from '../utils/logger.js';
 
 const requestOtpSchema = z.object({
   email: z.string().trim().email('Enter a valid email address.'),
@@ -96,22 +97,29 @@ export async function requestOtp(req, res, next) {
     }
 
     const email = normalizeEmail(parsed.data.email);
+    const maskedEmail = maskEmail(email);
     const fullName = parsed.data.fullName.trim();
     const mode = parsed.data.mode;
 
-    console.log('[auth/requestOtp] start', JSON.stringify({ email, mode }));
+    logger.info('auth.requestOtp.start', { ...getRequestMeta(req), email: maskedEmail, mode });
 
     let existingUser;
     try {
       existingUser = await findAuthUserByEmail(email);
     } catch (err) {
-      console.error(
-        '[auth/requestOtp] blocked before OTP: Supabase user lookup failed (fix network/DNS or SUPABASE_URL). SMTP is not reached yet.'
-      );
+      logger.error('auth.requestOtp.userLookup.failed', {
+        ...getRequestMeta(req),
+        email: maskedEmail,
+        message: err?.message
+      });
       throw err;
     }
 
-    console.log('[auth/requestOtp] user lookup ok', JSON.stringify({ email, hasUser: Boolean(existingUser) }));
+    logger.info('auth.requestOtp.userLookup.ok', {
+      ...getRequestMeta(req),
+      email: maskedEmail,
+      hasUser: Boolean(existingUser)
+    });
 
     if (mode === 'signup') {
       if (!fullName) {
@@ -152,7 +160,7 @@ export async function requestOtp(req, res, next) {
       last_sent_at: new Date().toISOString()
     });
 
-    console.log('[auth/requestOtp] otp row saved, sending mail', JSON.stringify({ email, mode }));
+    logger.info('auth.requestOtp.otpSaved', { ...getRequestMeta(req), email: maskedEmail, mode });
 
     const mailResult = await sendOtpEmail({ email, otp, fullName, mode });
     const response = {
@@ -166,10 +174,12 @@ export async function requestOtp(req, res, next) {
       response.message = `SMTP is not configured, so a development OTP was generated for ${email}.`;
     }
 
-    console.log(
-      '[auth/requestOtp] done',
-      JSON.stringify({ email, mode, mailDelivered: mailResult.delivered })
-    );
+    logger.info('auth.requestOtp.done', {
+      ...getRequestMeta(req),
+      email: maskedEmail,
+      mode,
+      mailDelivered: mailResult.delivered
+    });
 
     res.json(response);
   } catch (error) {

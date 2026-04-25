@@ -7,6 +7,7 @@ import {
   appendSubmissionsBatchToGoogleSheet,
   isGoogleSheetsConfigured
 } from '../utils/googleSheets.js';
+import { getRequestMeta, logger, maskEmail } from '../utils/logger.js';
 
 const loginSchema = z.object({
   email: z.string().trim().email('Enter a valid admin email.'),
@@ -34,6 +35,7 @@ export async function adminLogin(req, res, next) {
     }
 
     const token = jwt.sign({ role: 'admin', email: givenEmail }, process.env.JWT_SECRET, { expiresIn: '8h' });
+    logger.info('admin.login.success', { ...getRequestMeta(req), email: maskEmail(givenEmail) });
     res.json({ token });
   } catch (error) {
     next(error);
@@ -44,6 +46,11 @@ export async function getSubmissions(req, res, next) {
   try {
     const status = ['pending', 'verified'].includes(req.query.status) ? req.query.status : undefined;
     const submissions = await listSubmissions(status);
+    logger.info('admin.submissions.list', {
+      ...getRequestMeta(req),
+      status: status || 'all',
+      count: submissions.length
+    });
     res.json({ submissions });
   } catch (error) {
     next(error);
@@ -55,8 +62,13 @@ export async function verifySubmission(req, res, next) {
     const id = z.coerce.number().int().positive().parse(req.params.id);
     const submission = await updateSubmission(id, { payment_status: 'verified' });
     void appendSubmissionToGoogleSheet(submission, 'verified').catch((err) =>
-      console.error('[sheets]', err.message || err)
+      logger.warn('sheets.append.failed', {
+        ...getRequestMeta(req),
+        event: 'verified',
+        message: err?.message || String(err)
+      })
     );
+    logger.info('admin.submission.verified', { ...getRequestMeta(req), submissionId: id });
     res.json({ submission });
   } catch (error) {
     next(error);
@@ -76,6 +88,11 @@ export async function backfillGoogleSheets(req, res, next) {
       throw new AppError('Google Sheets append was skipped (check credentials).', 503);
     }
 
+    logger.info('admin.sheets.backfill.success', {
+      ...getRequestMeta(req),
+      appended: result.appended,
+      updatedRange: result.updatedRange ?? null
+    });
     res.json({
       appended: result.appended,
       updatedRange: result.updatedRange ?? null
