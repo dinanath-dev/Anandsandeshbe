@@ -3,26 +3,25 @@ import fs from 'fs';
 
 /** Column order — add this header row once in row 1 of your sheet. */
 export const SUBMISSION_SHEET_HEADERS = [
-
-  'subscriber_no',
-  'name',
-  'mobile',
-  'email',
-  'gender',
-  'address',
-  'house_no',
-  'street',
-  'area',
-  'town',
-  'district',
-  'state',
-  'pin',
-  'rehbar',
-  'anand_sandesh_lang',
-  'spiritual_bliss',
-  'subscription_type',
-  'transaction_id',
-  'payment_status'
+  'SUBSCRIBER_NO',
+  'NAME',
+  'MOBILE',
+  'EMAIL',
+  'GENDER',
+  'ADDRESS',
+  'HOUSE_NO',
+  'STREET',
+  'AREA',
+  'TOWN',
+  'DISTRICT',
+  'STATE',
+  'PIN',
+  'REHBAR',
+  'ANAND_SANDESH_LANG',
+  'SPIRITUAL_BLISS',
+  'SUBSCRIPTION_TYPE',
+  'TRANSACTION_ID',
+  'PAYMENT_STATUS'
 ];
 
 function loadServiceAccount() {
@@ -153,36 +152,6 @@ export async function verifyGoogleSheetAccess() {
   };
 }
 
-function rowFromSubmission(submission, event) {
-  const s = submission || {};
-  const cell = (v) => (v === null || v === undefined ? '' : String(v));
-  const now = new Date().toISOString();
-  return [
-    now,
-    event,
-    cell(s.subscriber_no),
-    cell(s.name),
-    cell(s.mobile),
-    cell(s.email),
-    cell(s.gender),
-    cell(s.address),
-    cell(s.house_no),
-    cell(s.street),
-    cell(s.area),
-    cell(s.town),
-    cell(s.district),
-    cell(s.state),
-    cell(s.pin),
-    cell(s.rehbar),
-    cell(s.anand_sandesh_lang),
-    cell(s.spiritual_bliss),
-    cell(s.subscription_type),
-    cell(s.transaction_id),
-    cell(s.payment_status),
-    cell(s.screenshot_url)
-  ];
-}
-
 const APPEND_BATCH_SIZE = 200;
 
 function indexToColumnName(index) {
@@ -201,6 +170,26 @@ function getSheetTabFromRange(range) {
   if (!raw.includes('!')) return 'Sheet1';
   const tab = raw.split('!')[0].trim();
   return tab.replace(/^'|'$/g, '') || 'Sheet1';
+}
+
+function getAppendRange(range) {
+  const tab = getSheetTabFromRange(range);
+  const endCol = indexToColumnName(SUBMISSION_SHEET_HEADERS.length);
+  return `${tab}!A:${endCol}`;
+}
+
+function normalizeHeader(value) {
+  return String(value || '').trim();
+}
+
+function valueFromHeader(submission, header, event, nowIso) {
+  const s = submission || {};
+  const key = normalizeHeader(header).toLowerCase();
+  if (!key) return '';
+  if (key === 'timestamp') return nowIso;
+  if (key === 'event') return event || '';
+  const raw = s[key];
+  return raw === null || raw === undefined ? '' : String(raw);
 }
 
 async function setHeaderRow(accessToken, spreadsheetId, range) {
@@ -230,6 +219,104 @@ async function setHeaderRow(accessToken, spreadsheetId, range) {
     const msg = body.error?.message || body.error || `Sheets header HTTP ${res.status}`;
     throw new Error(msg);
   }
+}
+
+async function getHeaderRow(accessToken, spreadsheetId, range) {
+  const tab = getSheetTabFromRange(range);
+  const url = new URL(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`${tab}!1:1`)}`
+  );
+
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = body.error?.message || body.error || `Sheets header read HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  const firstRow = Array.isArray(body.values?.[0]) ? body.values[0] : [];
+  return firstRow.map(normalizeHeader).filter(Boolean);
+}
+
+function rowFromSubmissionByHeaders(submission, event, headers) {
+  const nowIso = new Date().toISOString();
+  return headers.map((header) => valueFromHeader(submission, header, event, nowIso));
+}
+
+function pickMatchKey(submission) {
+  const s = submission || {};
+  if (s.subscriber_no !== null && s.subscriber_no !== undefined && String(s.subscriber_no).trim()) {
+    return { key: 'subscriber_no', value: String(s.subscriber_no).trim() };
+  }
+  if (s.transaction_id !== null && s.transaction_id !== undefined && String(s.transaction_id).trim()) {
+    return { key: 'transaction_id', value: String(s.transaction_id).trim() };
+  }
+  return null;
+}
+
+async function findRowNumberByKey(accessToken, spreadsheetId, range, key, value) {
+  const tab = getSheetTabFromRange(range);
+  const readRange = `${tab}!A:Z`;
+  const url = new URL(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(readRange)}`
+  );
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = body.error?.message || body.error || `Sheets lookup HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  const rows = Array.isArray(body.values) ? body.values : [];
+  if (rows.length === 0) return null;
+
+  const headers = (rows[0] || []).map(normalizeHeader);
+  const keyIndex = headers.findIndex((h) => h.toLowerCase() === String(key || '').toLowerCase());
+  if (keyIndex < 0) return null;
+
+  for (let i = 1; i < rows.length; i += 1) {
+    const rowValue = rows[i]?.[keyIndex];
+    if (String(rowValue || '').trim() === String(value || '').trim()) {
+      return i + 1;
+    }
+  }
+  return null;
+}
+
+async function updateRow(accessToken, spreadsheetId, range, rowNumber, valueRow) {
+  const tab = getSheetTabFromRange(range);
+  const endCol = indexToColumnName(valueRow.length);
+  const rowRange = `${tab}!A${rowNumber}:${endCol}${rowNumber}`;
+  const url = new URL(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rowRange)}`
+  );
+  url.searchParams.set('valueInputOption', 'USER_ENTERED');
+
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      range: rowRange,
+      majorDimension: 'ROWS',
+      values: [valueRow]
+    })
+  });
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = body.error?.message || body.error || `Sheets update HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return body;
 }
 
 async function appendValueRows(accessToken, spreadsheetId, range, valueRows) {
@@ -269,7 +356,8 @@ async function appendValueRows(accessToken, spreadsheetId, range, valueRows) {
  */
 export async function appendSubmissionToGoogleSheet(submission, event) {
   const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID?.trim();
-  const range = (process.env.GOOGLE_SHEETS_RANGE || 'Sheet1!A:Z').trim();
+  const configuredRange = (process.env.GOOGLE_SHEETS_RANGE || 'Sheet1!A:Z').trim();
+  const range = getAppendRange(configuredRange);
   const credentials = loadServiceAccount();
 
   if (!spreadsheetId || !credentials?.private_key || !credentials?.client_email) {
@@ -278,11 +366,27 @@ export async function appendSubmissionToGoogleSheet(submission, event) {
 
   const accessToken = await getAccessToken(credentials);
   await setHeaderRow(accessToken, spreadsheetId, range);
-  const errBody = await appendValueRows(accessToken, spreadsheetId, range, [
-    rowFromSubmission(submission, event)
-  ]);
+  const headers = await getHeaderRow(accessToken, spreadsheetId, configuredRange);
+  const activeHeaders = headers.length > 0 ? headers : SUBMISSION_SHEET_HEADERS;
+  const row = rowFromSubmissionByHeaders(submission, event, activeHeaders);
+  const match = pickMatchKey(submission);
 
-  return { skipped: false, updatedRange: errBody.updates?.updatedRange };
+  if (event === 'updated' && match) {
+    const rowNumber = await findRowNumberByKey(
+      accessToken,
+      spreadsheetId,
+      configuredRange,
+      match.key,
+      match.value
+    );
+    if (rowNumber) {
+      const updateBody = await updateRow(accessToken, spreadsheetId, configuredRange, rowNumber, row);
+      return { skipped: false, updatedRange: updateBody.updatedRange, mode: 'update' };
+    }
+  }
+
+  const appendBody = await appendValueRows(accessToken, spreadsheetId, range, [row]);
+  return { skipped: false, updatedRange: appendBody.updates?.updatedRange, mode: 'append' };
 }
 
 /**
@@ -291,7 +395,8 @@ export async function appendSubmissionToGoogleSheet(submission, event) {
  */
 export async function appendSubmissionsBatchToGoogleSheet(submissions, event) {
   const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID?.trim();
-  const range = (process.env.GOOGLE_SHEETS_RANGE || 'Sheet1!A:Z').trim();
+  const configuredRange = (process.env.GOOGLE_SHEETS_RANGE || 'Sheet1!A:Z').trim();
+  const range = getAppendRange(configuredRange);
   const credentials = loadServiceAccount();
 
   if (!spreadsheetId || !credentials?.private_key || !credentials?.client_email) {
@@ -305,7 +410,9 @@ export async function appendSubmissionsBatchToGoogleSheet(submissions, event) {
 
   const accessToken = await getAccessToken(credentials);
   await setHeaderRow(accessToken, spreadsheetId, range);
-  const rows = list.map((s) => rowFromSubmission(s, event));
+  const headers = await getHeaderRow(accessToken, spreadsheetId, configuredRange);
+  const activeHeaders = headers.length > 0 ? headers : SUBMISSION_SHEET_HEADERS;
+  const rows = list.map((s) => rowFromSubmissionByHeaders(s, event, activeHeaders));
   let lastRange;
 
   for (let i = 0; i < rows.length; i += APPEND_BATCH_SIZE) {
