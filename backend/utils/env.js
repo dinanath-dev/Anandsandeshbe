@@ -37,5 +37,11 @@ export function validateEnv() {
         throw new Error(`Environment variable ${key} is required in production for email OTP delivery.`);
       }
     }
+
+    for (const key of ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET']) {
+      if (!process.env[key]) {
+        throw new Error(`Environment variable ${key} is required in production for Razorpay integration.`);
+      }
+    }
   }
 }

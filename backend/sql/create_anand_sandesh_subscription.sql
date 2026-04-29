@@ -27,7 +27,10 @@ create table if not exists public.anand_sandesh_subscription (
   subscription_type text,
   transaction_id text,
   screenshot_url text,
-  payment_status text not null default 'pending' check (payment_status in ('pending', 'verified')),
+  plan_id text,
+  razorpay_subscription_id text,
+  razorpay_payment_id text,
+  payment_status text not null default 'pending' check (payment_status in ('pending', 'verified', 'failed', 'cancelled')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -38,6 +41,10 @@ create index if not exists anand_sandesh_subscription_payment_status_idx
   on public.anand_sandesh_subscription (payment_status);
 create index if not exists anand_sandesh_subscription_created_at_idx
   on public.anand_sandesh_subscription (created_at desc);
+create index if not exists anand_sandesh_subscription_razorpay_subscription_id_idx
+  on public.anand_sandesh_subscription (razorpay_subscription_id);
+create index if not exists anand_sandesh_subscription_razorpay_payment_id_idx
+  on public.anand_sandesh_subscription (razorpay_payment_id);
 
 create or replace function public.set_updated_at()
 returns trigger
