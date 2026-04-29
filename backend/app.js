@@ -15,10 +15,14 @@ validateEnv();
 
 const app = express();
 
+const frontendOrigin = (
+  process.env.FRONTEND_URL || 'http://localhost:5173'
+).replace(/\/+$/, '');
+
 app.use(helmet());
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: frontendOrigin,
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization']
   })
