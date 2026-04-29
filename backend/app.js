@@ -24,6 +24,8 @@ app.use(
   cors({
     origin: frontendOrigin,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    maxAge: 86400,
     allowedHeaders: ['Content-Type', 'Authorization']
   })
 );

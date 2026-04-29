@@ -107,3 +107,15 @@ export async function updateAuthUserByEmail(email, payload) {
   if (error) fail(error, 'Could not update user profile.', 500, `updateAuthUserByEmail:${USER_TABLE}`);
   return data;
 }
+
+export async function touchAuthLoginByEmail(email) {
+  const { error } = await supabase
+    .from(USER_TABLE)
+    .update({
+      last_auth_mode: 'login',
+      last_login_at: new Date().toISOString()
+    })
+    .eq('email', email);
+
+  if (error) fail(error, 'Could not update user profile.', 500, `touchAuthLoginByEmail:${USER_TABLE}`);
+}

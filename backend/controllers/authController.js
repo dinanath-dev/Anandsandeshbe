@@ -7,6 +7,7 @@ import {
   deleteOtpRecordByEmail,
   findAuthUserByEmail,
   findOtpRecordByEmail,
+  touchAuthLoginByEmail,
   updateAuthUserByEmail,
   updateOtpRecordByEmail,
   upsertAuthUser,
@@ -62,17 +63,35 @@ function createOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function hashPassword(password) {
+function scryptAsync(password, salt, keylen = 64) {
+  const cost = Number(process.env.AUTH_SCRYPT_N || 16384);
+  const blockSize = Number(process.env.AUTH_SCRYPT_R || 8);
+  const parallelization = Number(process.env.AUTH_SCRYPT_P || 1);
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(
+      password,
+      salt,
+      keylen,
+      { N: cost, r: blockSize, p: parallelization },
+      (error, derivedKey) => {
+        if (error) return reject(error);
+        return resolve(derivedKey);
+      }
+    );
+  });
+}
+
+async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  const hash = (await scryptAsync(password, salt, 64)).toString('hex');
   return `${salt}:${hash}`;
 }
 
-function verifyPassword(password, storedHash) {
+async function verifyPassword(password, storedHash) {
   const [salt, hash] = String(storedHash || '').split(':');
   if (!salt || !hash) return false;
 
-  const attemptedHash = crypto.scryptSync(password, salt, 64).toString('hex');
+  const attemptedHash = (await scryptAsync(password, salt, 64)).toString('hex');
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(attemptedHash, 'hex'));
 }
 
@@ -87,6 +106,11 @@ function createUserToken(record) {
     process.env.JWT_SECRET,
     { expiresIn: process.env.AUTH_JWT_EXPIRES_IN || '7d' }
   );
+}
+
+async function resolveSubscriberNo(user, email) {
+  if (user?.subscriber_no != null) return Number(user.subscriber_no);
+  return allocateSubscriberNo(email);
 }
 
 export async function requestOtp(req, res, next) {
@@ -154,7 +178,7 @@ export async function requestOtp(req, res, next) {
       full_name: fullName || null,
       mode,
       otp_hash: hashOtp(email, otp),
-      password_hash: mode === 'signup' ? hashPassword(parsed.data.password.trim()) : null,
+      password_hash: mode === 'signup' ? await hashPassword(parsed.data.password.trim()) : null,
       attempts: 0,
       expires_at: expiresAt,
       last_sent_at: new Date().toISOString()
@@ -230,7 +254,7 @@ export async function verifyOtp(req, res, next) {
       last_login_at: new Date().toISOString()
     });
 
-    const subscriberNo = await allocateSubscriberNo(email);
+    const subscriberNo = await resolveSubscriberNo(user, email);
 
     const token = createUserToken({
       email: user.email,
@@ -267,30 +291,28 @@ export async function loginWithPassword(req, res, next) {
     if (user.is_verified === false) {
       throw new AppError('Please verify your email before signing in with a password.', 403);
     }
-    if (!user.password_hash || !verifyPassword(parsed.data.password, user.password_hash)) {
+    if (!user.password_hash || !(await verifyPassword(parsed.data.password, user.password_hash))) {
       throw new AppError('Invalid email or password.', 401);
     }
 
-    const updated = await updateAuthUserByEmail(email, {
-      last_auth_mode: 'login',
-      last_login_at: new Date().toISOString()
-    });
-
-    const subscriberNo = await allocateSubscriberNo(email);
+    const [subscriberNo] = await Promise.all([
+      resolveSubscriberNo(user, email),
+      touchAuthLoginByEmail(email)
+    ]);
 
     const token = createUserToken({
-      email: updated.email,
-      fullName: updated.full_name || '',
+      email: user.email,
+      fullName: user.full_name || '',
       subscriberNo
     });
 
     res.json({
       token,
       user: {
-        email: updated.email,
-        fullName: updated.full_name || '',
+        email: user.email,
+        fullName: user.full_name || '',
         subscriberNo,
-        mode: updated.last_auth_mode
+        mode: 'login'
       }
     });
   } catch (error) {
@@ -330,7 +352,7 @@ export async function resetPasswordWithOtp(req, res, next) {
     }
 
     await updateAuthUserByEmail(email, {
-      password_hash: hashPassword(parsed.data.newPassword),
+      password_hash: await hashPassword(parsed.data.newPassword),
       last_auth_mode: 'login',
       last_login_at: new Date().toISOString()
     });
