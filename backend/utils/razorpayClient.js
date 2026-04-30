@@ -46,6 +46,13 @@ export async function createRazorpaySubscription(payload) {
   return client.subscriptions.create(payload);
 }
 
+export async function fetchRazorpayPayment(paymentId) {
+  const id = String(paymentId || '').trim();
+  if (!id) return null;
+  const client = getRazorpayClient();
+  return client.payments.fetch(id);
+}
+
 export function verifyRazorpayCheckoutSignature({
   razorpay_payment_id,
   razorpay_subscription_id,

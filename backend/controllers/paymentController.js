@@ -13,6 +13,7 @@ import { getRequestMeta, logger, maskEmail } from '../utils/logger.js';
 import { sendPaymentReceiptEmail } from '../utils/mailer.js';
 import {
   createRazorpaySubscription,
+  fetchRazorpayPayment,
   razorpayErrorToAppError,
   verifyRazorpayCheckoutSignature,
   verifyRazorpayWebhookSignature
@@ -180,16 +181,25 @@ export async function verifySubscription(req, res, next) {
     });
 
     if (!wasVerified && updated.email) {
-      const paidAt = new Date().toISOString();
+      let paidAt = new Date().toISOString();
+      let amountPaise = null;
+      try {
+        const payment = await fetchRazorpayPayment(parsed.data.razorpay_payment_id);
+        if (payment?.amount != null) amountPaise = payment.amount;
+        if (payment?.created_at) {
+          const ts = Number(payment.created_at);
+          if (Number.isFinite(ts)) paidAt = new Date(ts * 1000).toISOString();
+        }
+      } catch (err) {
+        logger.warn('payment.receipt.amount_lookup_failed', {
+          ...getRequestMeta(req),
+          message: err?.message || String(err)
+        });
+      }
       void sendPaymentReceiptEmail({
         to: updated.email,
-        fullName: updated.name,
-        subscriberNo: updated.subscriber_no ?? updated.id,
-        planId: updated.plan_id,
-        razorpayPaymentId: parsed.data.razorpay_payment_id,
-        razorpaySubscriptionId: parsed.data.razorpay_subscription_id,
-        amountPaise: null,
-        currency: 'INR',
+        submission: updated,
+        amountPaise,
         paidAtIso: paidAt
       }).catch((err) =>
         logger.warn('payment.receipt.email_failed', {
@@ -294,13 +304,8 @@ export async function handleWebhook(req, res, next) {
       }
       void sendPaymentReceiptEmail({
         to: updated.email,
-        fullName: updated.name,
-        subscriberNo: updated.subscriber_no ?? updated.id,
-        planId: updated.plan_id,
-        razorpayPaymentId: nextPatch.razorpay_payment_id,
-        razorpaySubscriptionId: subscriptionId,
-        amountPaise: paymentEntity?.amount,
-        currency: paymentEntity?.currency || 'INR',
+        submission: updated,
+        amountPaise: paymentEntity?.amount ?? null,
         paidAtIso: paidAt
       }).catch((err) =>
         logger.warn('payment.receipt.email_failed', {
