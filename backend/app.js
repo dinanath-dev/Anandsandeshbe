@@ -15,14 +15,21 @@ validateEnv();
 
 const app = express();
 
-const frontendOrigin = (
-  process.env.FRONTEND_URL || 'http://localhost:5173'
-).replace(/\/+$/, '');
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map((o) => o.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
 
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(
   cors({
-    origin: frontendOrigin,
+    origin(origin, cb) {
+      if (!origin) return cb(null, true);
+      const normalized = origin.replace(/\/+$/, '');
+      if (allowedOrigins.includes(normalized)) return cb(null, true);
+      return cb(new Error(`CORS: origin ${origin} is not allowed`));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     maxAge: 86400,

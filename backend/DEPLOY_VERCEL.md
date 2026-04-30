@@ -40,7 +40,9 @@ Add all required backend variables in Vercel Project Settings:
 ## 5) Notes
 - `server.js` is for local development (`npm run dev`).
 - Vercel uses `api/index.js` plus `vercel.json` rewrites so every `/api/...` path hits the same Express app (multi-segment paths like `/api/auth/login` need this).
-- Set **`FRONTEND_URL`** to your deployed SPA origin so CORS matches (e.g. `https://your-app.vercel.app`).
+- Set **`FRONTEND_URL`** to your deployed SPA origin(s) so CORS matches. Supports a comma-separated list (no trailing slash, no spaces required), e.g.
+  `https://www.anandsandeshkaryalay.online,https://anandsandeshkaryalay.online,https://anandsandesh-fe.vercel.app`.
+- If the API is served from a custom subdomain (e.g. `https://api.anandsandeshkaryalay.online`), point that domain at the Vercel project under **Settings → Domains**, and set the frontend's `VITE_API_BASE_URL=https://api.anandsandeshkaryalay.online` so requests target the right host.
 - **Function duration / payload limits** apply on Vercel (Hobby has a short default timeout; increase in project settings if webhooks or uploads need more time).
 - **Razorpay webhook** URL in the Razorpay dashboard must be your production base + `/api/payment/webhook`.
 - **File uploads** (form screenshot) use serverless memory limits; very large files may need a different storage flow.
